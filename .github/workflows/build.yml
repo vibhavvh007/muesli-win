@@ -31,6 +31,10 @@ jobs:
   # The real verification: does it import, test and freeze on Windows?
   windows:
     runs-on: windows-latest
+    # The repo default is a read-only token, which would make the release step
+    # below fail. Scoped to this job rather than granted repo-wide.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
