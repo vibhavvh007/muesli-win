@@ -1,0 +1,108 @@
+name: build
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Fast feedback: the OS-independent logic (gestures, dictionary, cleanup,
+  # config migration) runs everywhere, so a logic regression is caught in ~1 min.
+  logic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check muesli_win tests
+      - name: Tests (offscreen Qt)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libegl1 libxkbcommon-x11-0 libxcb-cursor0 \
+            libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libdbus-1-3
+          pytest tests -q
+
+  # The real verification: does it import, test and freeze on Windows?
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip wheel
+          pip install -r requirements.txt -r requirements-optional.txt -r requirements-dev.txt
+
+      - name: Import every module on Windows
+        run: |
+          python -c "import muesli_win.app, muesli_win.controller, muesli_win.cli.main"
+          python -c "import muesli_win.winput.hook, muesli_win.winput.injector"
+          python -c "import muesli_win.audio.capture, muesli_win.audio.sysaudio"
+          python -c "import muesli_win.meetings.recorder, muesli_win.meetings.summarize"
+
+      - name: Windows-only checks
+        run: python -m pytest tests -q
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: CLI works before freezing
+        run: |
+          python -m muesli_win.cli.main spec
+          python -m muesli_win.cli.main info
+          python -m muesli_win.cli.main devices
+
+      - name: Icon
+        run: python packaging\make_icon.py
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: Freeze with PyInstaller
+        run: python -m PyInstaller --noconfirm --clean packaging\muesli.spec
+
+      - name: The frozen build must actually run
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist\Muesli\Muesli.exe")) { throw "Muesli.exe missing" }
+          if (-not (Test-Path "dist\Muesli\muesli-cli.exe")) { throw "muesli-cli.exe missing" }
+          $info = & "dist\Muesli\muesli-cli.exe" info | ConvertFrom-Json
+          if (-not $info.version) { throw "frozen CLI returned no version" }
+          Write-Host "frozen CLI reports version $($info.version), frozen=$($info.frozen)"
+          if (-not $info.frozen) { throw "expected the CLI to report frozen=true" }
+          $size = (Get-ChildItem dist\Muesli -Recurse | Measure-Object Length -Sum).Sum / 1MB
+          Write-Host ("payload {0:N0} MB" -f $size)
+
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          winget install --silent --accept-source-agreements --accept-package-agreements JRSoftware.InnoSetup 2>&1 | Out-Null
+          $iscc = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { Write-Warning "Inno Setup unavailable; skipping installer"; exit 0 }
+          & $iscc packaging\muesli.iss
+          Get-ChildItem dist\Muesli-Setup-*.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Muesli-windows
+          path: |
+            dist/Muesli-Setup-*.exe
+            dist/Muesli/
+          retention-days: 30
+
+      - name: Attach the installer to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Muesli-Setup-*.exe
