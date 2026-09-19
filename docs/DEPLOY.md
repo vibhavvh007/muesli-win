@@ -90,8 +90,9 @@ nothing.
 >
 > 1. Download the installer, extract the `.zip`, run `Muesli-Setup-1.0.0.exe`.
 > 2. Windows will warn that the publisher is unknown. Click **More info → Run anyway**.
-> 3. On first launch, open **Settings → Models** and pick `large-v3-turbo`.
->    It downloads about 1.6 GB once — do it on a decent connection.
+> 3. On first launch, open **Settings → Models**, select `parakeet-tdt-0.6b-v3`
+>    and press **Download** (640 MB, fastest), or `large-v3-turbo` (1.6 GB) if you
+>    dictate in more than one language. The progress bar shows how it is going.
 > 4. Open Notepad, **hold Right Ctrl**, say a sentence, let go. It types itself.
 >    Double-tap Right Ctrl for hands-free; tap once to stop. Esc discards.
 >

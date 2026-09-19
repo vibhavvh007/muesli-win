@@ -31,7 +31,10 @@ MODELS = {
     "medium": "Systran/faster-whisper-medium",
     "medium.en": "Systran/faster-whisper-medium.en",
     "large-v3": "Systran/faster-whisper-large-v3",
-    "large-v3-turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+    # Not mobiuslabsgmbh/: that repo has been transferred and now only resolves
+    # through a redirect. deepdml/ is the widely used community CT2 conversion
+    # and resolves directly.
+    "large-v3-turbo": "deepdml/faster-whisper-large-v3-turbo-ct2",
     "distil-large-v3": "Systran/faster-distil-whisper-large-v3",
 }
 

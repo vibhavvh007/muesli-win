@@ -23,8 +23,25 @@ MODELS = {
     "parakeet-tdt-0.6b-v2": "istupakov/parakeet-tdt-0.6b-v2-onnx",
     "parakeet-ctc-0.6b": "istupakov/parakeet-ctc-0.6b-onnx",
 }
-APPROX_SIZE_MB = {"parakeet-tdt-0.6b-v3": 660, "parakeet-tdt-0.6b-v2": 640,
-                  "parakeet-ctc-0.6b": 620}
+# The repos carry both an fp32 encoder (a 2.3 GB external-weights blob) and an
+# int8 one. int8 is the default here: 640 MB instead of 2.4 GB, and faster on the
+# CPU that most Windows laptops will be using. Sizes measured, not estimated.
+APPROX_SIZE_MB = {
+    "parakeet-tdt-0.6b-v3": 640,
+    "parakeet-tdt-0.6b-v2": 640,
+    "parakeet-ctc-0.6b": 620,
+}
+APPROX_SIZE_MB_FP32 = {
+    "parakeet-tdt-0.6b-v3": 2370,
+    "parakeet-tdt-0.6b-v2": 2370,
+    "parakeet-ctc-0.6b": 2340,
+}
+DEFAULT_QUANTIZATION = "int8"
+
+
+def size_mb(model: str, quantization: str | None = DEFAULT_QUANTIZATION) -> int:
+    table = APPROX_SIZE_MB if quantization == "int8" else APPROX_SIZE_MB_FP32
+    return table.get(model, 0)
 
 
 def _providers() -> list[str]:
@@ -45,9 +62,11 @@ def _providers() -> list[str]:
 class ParakeetTranscriber(Transcriber):
     name = "parakeet"
 
-    def __init__(self, model: str = "parakeet-tdt-0.6b-v3", language: str = "auto") -> None:
+    def __init__(self, model: str = "parakeet-tdt-0.6b-v3", language: str = "auto",
+                 quantization: str | None = DEFAULT_QUANTIZATION) -> None:
         self.model_name = model if model in MODELS else "parakeet-tdt-0.6b-v3"
         self.language = language
+        self.quantization = quantization or None
         self._model = None
         self._loaded = False
 
@@ -65,13 +84,29 @@ class ParakeetTranscriber(Transcriber):
             self._model = onnx_asr.load_model(
                 MODELS[self.model_name],
                 path=str(paths.models_dir() / "parakeet"),
+                quantization=self.quantization,
                 providers=_providers(),
             )
         except Exception as exc:
-            raise TranscriptionError(f"could not load {self.model_name}: {exc}") from exc
+            if self.quantization:
+                # An int8 variant may be missing from a repo; fp32 always exists.
+                log.warning("int8 load failed (%s); retrying at full precision", exc)
+                try:
+                    self._model = onnx_asr.load_model(
+                        MODELS[self.model_name],
+                        path=str(paths.models_dir() / "parakeet"),
+                        providers=_providers(),
+                    )
+                    self.quantization = None
+                except Exception as exc2:
+                    raise TranscriptionError(
+                        f"could not load {self.model_name}: {exc2}") from exc2
+            else:
+                raise TranscriptionError(
+                    f"could not load {self.model_name}: {exc}") from exc
         self._loaded = True
-        log.info("parakeet %s loaded in %.1fs via %s", self.model_name,
-                 time.monotonic() - t0, _providers()[0])
+        log.info("parakeet %s (%s) loaded in %.1fs via %s", self.model_name,
+                 self.quantization or "fp32", time.monotonic() - t0, _providers()[0])
 
     def transcribe(self, audio: np.ndarray, *, language: str = "auto",
                    prompt: str = "") -> Transcript:

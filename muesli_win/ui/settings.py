@@ -7,8 +7,10 @@ are picked up by the controller through its config subscription.
 from __future__ import annotations
 
 import logging
+import sys
+import time
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -37,6 +39,7 @@ from ..stt.registry import catalog
 from ..text import llm
 from ..winput.hook import layout_has_altgr
 from . import icons
+from .models_panel import ModelsPanel
 
 log = logging.getLogger(__name__)
 
@@ -66,12 +69,27 @@ class SettingsWindow(QDialog):
 
         root = QVBoxLayout(self)
         root.addWidget(tabs)
+
+        # Settings are written the moment they change, but a window with only a
+        # Close button gives no way to know that. This footer says so, and shows
+        # the time of the last write so it is visibly true.
         row = QHBoxLayout()
+        self.saved_label = QLabel("All changes are saved automatically.")
+        self.saved_label.setStyleSheet("color:#666;")
+        row.addWidget(self.saved_label)
         row.addStretch(1)
-        close = QPushButton("Close")
-        close.clicked.connect(self.accept)
-        row.addWidget(close)
+        reveal = QPushButton("Show config file")
+        reveal.clicked.connect(self._reveal_config)
+        row.addWidget(reveal)
+        done = QPushButton("Done")
+        done.setDefault(True)
+        done.clicked.connect(self.accept)
+        row.addWidget(done)
         root.addLayout(row)
+
+        self._flash = QTimer(self)
+        self._flash.setSingleShot(True)
+        self._flash.timeout.connect(self._reset_saved_label)
 
     # -- helpers -----------------------------------------------------------
     def _bind_check(self, key: str, label: str) -> QCheckBox:
@@ -99,6 +117,57 @@ class SettingsWindow(QDialog):
     def _set(self, key: str, value) -> None:
         self.cfg.set(key, value)
         self.changed.emit(key)
+        self._mark_saved()
+
+    def _mark_saved(self) -> None:
+        self.saved_label.setText(f"Saved  \u2713   {time.strftime('%H:%M:%S')}")
+        self.saved_label.setStyleSheet("color:#2e7d32; font-weight:600;")
+        self._flash.start(2500)
+
+    def _reset_saved_label(self) -> None:
+        self.saved_label.setText("All changes are saved automatically.")
+        self.saved_label.setStyleSheet("color:#666;")
+
+    def _reveal_config(self) -> None:
+        import subprocess
+        path = self.cfg.path
+        try:
+            if sys.platform == "win32":
+                subprocess.run(["explorer", "/select,", str(path)], check=False)
+            elif sys.platform == "darwin":
+                subprocess.run(["open", "-R", str(path)], check=False)
+            else:
+                subprocess.run(["xdg-open", str(path.parent)], check=False)
+        except Exception:
+            QMessageBox.information(self, "Config file", str(path))
+
+    # -- make sure nothing in flight is lost -------------------------------
+    def flush(self) -> None:
+        """Commit anything still sitting in a focused editor or the table.
+
+        A QLineEdit only writes on editingFinished, and the dictionary table
+        needed an explicit button press - so closing the window straight after
+        typing could silently discard the edit. This is called on every exit
+        path.
+        """
+        w = self.focusWidget()
+        if w is not None:
+            w.clearFocus()                  # fires editingFinished
+        if getattr(self, "_dict_dirty", False):
+            self._save_dictionary(silent=True)
+
+    def accept(self) -> None:
+        self.flush()
+        if hasattr(self, "models_panel") and not self.models_panel.closing():
+            return
+        super().accept()
+
+    def closeEvent(self, event) -> None:
+        self.flush()
+        if hasattr(self, "models_panel") and not self.models_panel.closing():
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     # -- tabs --------------------------------------------------------------
     def _tab_dictation(self) -> QWidget:
@@ -217,9 +286,12 @@ class SettingsWindow(QDialog):
         comp.currentIndexChanged.connect(
             lambda _i, x=comp: self._set("win_compute_device", x.currentData()))
         f.addRow("Compute", comp)
-        f.addRow("", QLabel("Models download on first use. Nothing leaves this PC unless "
-                            "you pick a hosted engine."))
+        f.addRow("", QLabel("Nothing leaves this PC unless you pick a hosted engine."))
         v.addWidget(g)
+
+        self.models_panel = ModelsPanel(self.cfg)
+        self.models_panel.model_activated.connect(self._on_model_activated)
+        v.addWidget(self.models_panel)
 
         g2 = QGroupBox("Post-processing (optional LLM cleanup)")
         f2 = QFormLayout(g2)
@@ -269,9 +341,22 @@ class SettingsWindow(QDialog):
             self._set("stt_model", self.model_box.currentData())
         self.model_box.blockSignals(False)
 
+    def _on_model_activated(self, backend: str, model: str) -> None:
+        """Keep the dropdowns in step when the table changes the active model."""
+        i = self.backend_box.findData(backend)
+        if i >= 0:
+            self.backend_box.blockSignals(True)
+            self.backend_box.setCurrentIndex(i)
+            self.backend_box.blockSignals(False)
+        self._fill_models()
+        self._mark_saved()
+        self.changed.emit("stt_model")
+
     def _on_backend_changed(self) -> None:
         self._set("stt_backend", self.backend_box.currentData())
         self._fill_models()
+        if hasattr(self, "models_panel"):
+            self.models_panel.refresh()
 
     def _test_llm(self) -> None:
         target = llm.target_from_config(self.cfg, "post")
@@ -289,6 +374,7 @@ class SettingsWindow(QDialog):
         v.addWidget(QLabel(
             "Words Muesli should always get right - product names, colleagues, jargon. "
             "Matching is fuzzy, so “ultra human” still corrects to “Ultrahuman”."))
+        self._dict_dirty = False
         self.dict_table = QTableWidget(0, 3)
         self.dict_table.setHorizontalHeaderLabels(["Heard as", "Replace with", "Threshold"])
         self.dict_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -296,6 +382,12 @@ class SettingsWindow(QDialog):
         for e in self.cfg.get("custom_words", []) or []:
             self._add_dict_row(e.get("word", ""), e.get("replacement", ""),
                                e.get("matching_threshold", 0.85))
+        # Auto-save shortly after an edit, so the button is reassurance rather
+        # than the only thing standing between the user and losing their work.
+        self._dict_timer = QTimer(self)
+        self._dict_timer.setSingleShot(True)
+        self._dict_timer.timeout.connect(lambda: self._save_dictionary(silent=True))
+        self.dict_table.itemChanged.connect(self._on_dict_edited)
         v.addWidget(self.dict_table)
 
         row = QHBoxLayout()
@@ -319,11 +411,16 @@ class SettingsWindow(QDialog):
         self.dict_table.setItem(r, 1, QTableWidgetItem(str(repl)))
         self.dict_table.setItem(r, 2, QTableWidgetItem(str(threshold)))
 
+    def _on_dict_edited(self, *_a) -> None:
+        self._dict_dirty = True
+        self._dict_timer.start(900)
+
     def _remove_dict_row(self) -> None:
         for idx in sorted({i.row() for i in self.dict_table.selectedIndexes()}, reverse=True):
             self.dict_table.removeRow(idx)
+        self._on_dict_edited()
 
-    def _save_dictionary(self) -> None:
+    def _save_dictionary(self, silent: bool = False) -> None:
         entries = []
         for r in range(self.dict_table.rowCount()):
             word = (self.dict_table.item(r, 0).text() if self.dict_table.item(r, 0) else "").strip()
@@ -337,7 +434,9 @@ class SettingsWindow(QDialog):
             entries.append({"word": word, "replacement": repl or word,
                             "matching_threshold": max(0.5, min(1.0, th))})
         self._set("custom_words", entries)
-        QMessageBox.information(self, "Dictionary", f"Saved {len(entries)} entries.")
+        self._dict_dirty = False
+        if not silent:
+            QMessageBox.information(self, "Dictionary", f"Saved {len(entries)} entries.")
 
     def _tab_meetings(self) -> QWidget:
         w = QWidget()

@@ -46,9 +46,26 @@ Esc   while recording    discard the take
 Download `Muesli-Setup-1.0.0.exe` from the
 [Releases](../../releases) page and run it. Windows 10 1809 or later, 64-bit.
 
-On first launch pick a model in **Settings → Models**; it downloads once into
-`%LOCALAPPDATA%\Muesli\cache\models`. `large-v3` is ~3 GB and the most accurate;
-`large-v3-turbo` (~1.6 GB) is a good default if you have no GPU.
+On first launch open **Settings → Models**, pick a model and press **Download**.
+The table shows each model's size and whether it is already on disk, and the
+progress bar tells you how far along it is - so the first hotkey press is
+instant rather than a mystery pause.
+
+| Model | Size | Use it when |
+|---|---|---|
+| `parakeet-tdt-0.6b-v3` | 640 MB | You want the fastest dictation. English-first. Measured at 194 ms for 5.9 s of speech on a CPU |
+| `large-v3-turbo` | 1.6 GB | Good accuracy, multilingual, no GPU |
+| `large-v3` | 3 GB | Most accurate, multilingual. Comfortable with an NVIDIA GPU |
+| `small` / `base` | 480 / 145 MB | Older laptop, responsiveness over accuracy |
+
+Or pre-download from the command line:
+
+```powershell
+muesli-cli models list
+muesli-cli models download parakeet-tdt-0.6b-v3 --use
+```
+
+Models land in `%LOCALAPPDATA%\Muesli\cache\models`.
 
 ### Coming from a Mac
 

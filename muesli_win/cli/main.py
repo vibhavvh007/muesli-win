@@ -10,6 +10,8 @@ against the other:
     muesli-cli meetings get <id>
     muesli-cli meetings update-notes <id> --file notes.md
     muesli-cli meetings export <id> [--format markdown|pdf] [--content notes|transcript|both]
+    muesli-cli models list
+    muesli-cli models download <name>
     muesli-cli config get|set|path
     muesli-cli devices
     muesli-cli info
@@ -176,6 +178,32 @@ def cmd_meetings(args) -> int:
     return 0
 
 
+def cmd_models(args) -> int:
+    from ..stt import download as dl
+    if args.sub == "list":
+        _out(dl.status())
+        return 0
+    if args.sub == "path":
+        print(paths.models_dir())
+        return 0
+    # download
+    cfg = Config().load()
+    try:
+        print(f"downloading {args.name} - this can take several minutes",
+              file=sys.stderr)
+        info = dl.download(args.name,
+                           device=cfg.get("win_compute_device", "auto"),
+                           compute=cfg.get("win_compute_type", "auto"))
+    except Exception as exc:
+        return _fail(str(exc), 3)
+    if args.use:
+        cfg.set("stt_backend", info["backend"])
+        cfg.set("stt_model", info["name"])
+        info["now_active"] = True
+    _out({"ok": True, **info})
+    return 0
+
+
 def cmd_config(args) -> int:
     cfg = Config().load()
     if args.sub == "path":
@@ -232,6 +260,7 @@ def cmd_spec(_args) -> int:
                            "options": ["--model", "--backend", "--language", "--format"]},
             "dictations": {"sub": ["list", "get"]},
             "meetings": {"sub": ["list", "get", "update-notes", "export", "summarise"]},
+            "models": {"sub": ["list", "download", "path"]},
             "config": {"sub": ["get", "set", "path"]},
             "devices": {}, "info": {}, "spec": {},
         },
@@ -279,6 +308,16 @@ def build_parser() -> argparse.ArgumentParser:
     msum.add_argument("id")
     msum.add_argument("--template", default="auto")
     m.set_defaults(func=cmd_meetings)
+
+    mo = sub.add_parser("models", help="list or pre-download speech models")
+    mos = mo.add_subparsers(dest="sub", required=True)
+    mos.add_parser("list")
+    mos.add_parser("path")
+    mod = mos.add_parser("download")
+    mod.add_argument("name")
+    mod.add_argument("--use", action="store_true",
+                     help="also make this the active dictation model")
+    mo.set_defaults(func=cmd_models)
 
     c = sub.add_parser("config")
     cs = c.add_subparsers(dest="sub", required=True)
