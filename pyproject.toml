@@ -24,6 +24,9 @@ include = ["muesli_win*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Without this, a bare `pytest` (as opposed to `python -m pytest`) does not put
+# the repo root on sys.path and every test fails to import muesli_win.
+pythonpath = ["."]
 addopts = "-q --timeout=120"
 filterwarnings = ["ignore::DeprecationWarning"]
 
