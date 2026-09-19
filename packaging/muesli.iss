@@ -5,7 +5,7 @@
 ; process class, which is what we want for SendInput anyway.
 
 #define AppName      "Muesli"
-#define AppVersion   "1.0.0"
+#define AppVersion   "1.0.1"
 #define AppPublisher "Muesli for Windows"
 #define AppExe       "Muesli.exe"
 
