@@ -1,0 +1,14 @@
+# --- core (always needed) ---
+PySide6-Essentials>=6.7,<7
+numpy>=1.26
+requests>=2.31
+sounddevice>=0.4.6
+soxr>=0.3.7
+
+# --- speech to text ---
+faster-whisper>=1.0.3          # Whisper via CTranslate2 (CUDA or CPU int8)
+
+# --- Windows only ---
+pyaudiowpatch>=0.2.12.6 ; sys_platform == "win32"   # WASAPI loopback (system audio)
+pycaw>=20240210          ; sys_platform == "win32"  # mute other apps while dictating
+comtypes>=1.2.0          ; sys_platform == "win32"
