@@ -62,7 +62,7 @@ both in one folder and shares the dependencies.
 | | |
 |---|---|
 | `dist\Muesli\` | ~300–380 MB |
-| `Muesli-Setup-1.0.3.exe` | ~110–140 MB |
+| `Muesli-Setup-1.0.4.exe` | ~110–140 MB |
 | Plus models, after first run | 0.5–3 GB depending on choice |
 
 ## GPU builds

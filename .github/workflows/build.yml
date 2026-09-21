@@ -102,16 +102,30 @@ jobs:
           # The real end-to-end guard: downloads a model, loads the VAD asset and
           # transcribes. No unit test can catch a file missing from the bundle.
           python packaging\ci_make_wav.py ci-tone.wav
-          $out = & "dist\Muesli\muesli-cli.exe" transcribe ci-tone.wav --backend whisper --model tiny --format json 2>&1
-          $joined = $out -join "`n"
-          Write-Host $joined
-          if ($joined -match 'NO_SUCHFILE' -or $joined -match 'ONNXRuntimeError') {
+
+          # stdout and stderr must stay separate. huggingface_hub writes progress
+          # and rate-limit warnings to stderr; folding them into stdout with 2>&1
+          # puts "Xet Storage is enabled..." in front of the JSON and the parse
+          # fails on a run that actually worked.
+          & "dist\Muesli\muesli-cli.exe" transcribe ci-tone.wav --backend whisper `
+              --model tiny --format json 1>ci-out.json 2>ci-err.txt
+          $code = $LASTEXITCODE
+          $stdout = (Get-Content ci-out.json -Raw -ErrorAction SilentlyContinue)
+          $stderr = (Get-Content ci-err.txt  -Raw -ErrorAction SilentlyContinue)
+          Write-Host "--- stdout ---"; Write-Host $stdout
+          if ($stderr) { Write-Host "--- stderr ---"; Write-Host $stderr }
+
+          if ("$stdout$stderr" -match 'NO_SUCHFILE|ONNXRuntimeError') {
             throw "the frozen build is missing a model asset"
           }
-          if ($LASTEXITCODE -ne 0) { throw "muesli-cli transcribe exited $LASTEXITCODE" }
-          $parsed = $joined | ConvertFrom-Json
-          if ($null -eq $parsed.backend) { throw "transcribe returned no backend field" }
-          Write-Host "  transcribe OK via $($parsed.backend)/$($parsed.model)"
+          if ($code -ne 0) { throw "muesli-cli transcribe exited $code" }
+          if (-not $stdout) { throw "transcribe produced no output on stdout" }
+
+          $parsed = $stdout | ConvertFrom-Json
+          if ($parsed.backend -ne "whisper") { throw "unexpected backend: $($parsed.backend)" }
+          if ($parsed.model -ne "tiny") { throw "unexpected model: $($parsed.model)" }
+          if ($null -eq $parsed.latency_ms) { throw "no latency reported - did it really run?" }
+          Write-Host "  transcribe OK via $($parsed.backend)/$($parsed.model) in $($parsed.latency_ms) ms"
 
       - name: Build the installer
         shell: pwsh
