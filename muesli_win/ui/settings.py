@@ -89,6 +89,7 @@ class SettingsWindow(QDialog):
         # the time of the last write so it is visibly true.
         row = QHBoxLayout()
         self.saved_label = QLabel("All changes are saved automatically.")
+        self.saved_label.setMinimumWidth(1)
         self.saved_label.setStyleSheet("color:#666;")
         row.addWidget(self.saved_label)
         row.addStretch(1)
@@ -200,12 +201,13 @@ class SettingsWindow(QDialog):
 
         self.altgr_warning = QLabel()
         self.altgr_warning.setWordWrap(True)
+        self.altgr_warning.setMinimumWidth(1)
         self.altgr_warning.setStyleSheet("color:#b23b3b;")
         form.addRow("", self.altgr_warning)
         self._refresh_altgr_warning()
 
         form.addRow("Hold threshold", self._bind_spin("hotkey_trigger_threshold_ms", 80, 1200, " ms"))
-        form.addRow("", QLabel("Hold past the threshold to dictate; release to type."))
+        form.addRow("", _hint("Hold past the threshold to dictate; release to type."))
         form.addRow("", self._bind_check("enable_double_tap_dictation",
                                          "Double-tap for hands-free (tap once to stop)"))
         form.addRow("Double-tap window", self._bind_spin("double_tap_window_ms", 150, 1000, " ms"))
@@ -232,8 +234,7 @@ class SettingsWindow(QDialog):
                 "quill_hotkey", {"vk": int(x.currentData()),
                                  "label": VK_NAME.get(int(x.currentData()), "?")}))
         form.addRow("Quill hotkey", quill_key)
-        form.addRow("", QLabel("Quill needs a post-processing model configured "
-                               "under Models."))
+        form.addRow("", _hint("Quill needs a post-processing model configured under Models."))
 
         form.addRow(QLabel(""))
         dev = QComboBox()
@@ -300,7 +301,7 @@ class SettingsWindow(QDialog):
         comp.currentIndexChanged.connect(
             lambda _i, x=comp: self._set("win_compute_device", x.currentData()))
         f.addRow("Compute", comp)
-        f.addRow("", QLabel("Nothing leaves this PC unless you pick a hosted engine."))
+        f.addRow("", _hint("Nothing leaves this PC unless you pick a hosted engine."))
         v.addWidget(g)
 
         self.models_panel = ModelsPanel(self.cfg)
@@ -386,7 +387,7 @@ class SettingsWindow(QDialog):
     def _tab_dictionary(self) -> QWidget:
         w = QWidget()
         v = QVBoxLayout(w)
-        v.addWidget(QLabel(
+        v.addWidget(_hint(
             "Words Muesli should always get right - product names, colleagues, jargon. "
             "Matching is fuzzy, so “ultra human” still corrects to “Ultrahuman”."))
         self._dict_dirty = False
@@ -567,7 +568,7 @@ class SettingsWindow(QDialog):
         imp = QPushButton("Import settings from a Mac config.json…")
         imp.clicked.connect(self._import_config)
         f.addRow("", imp)
-        f.addRow("", QLabel("API keys already stored here are never overwritten by an import."))
+        f.addRow("", _hint("API keys already stored here are never overwritten by an import."))
         return w
 
     def _import_config(self) -> None:
@@ -584,6 +585,19 @@ class SettingsWindow(QDialog):
             self, "Imported",
             f"Merged {n} settings. Restart Muesli for the model and hotkey to take effect.")
         self.changed.emit("*")
+
+
+def _hint(text: str) -> QLabel:
+    """A wrapping help label.
+
+    A long non-wrapping QLabel sets a wide minimum on the whole dialog - it was
+    forcing the Settings minimum width to 752 px on Windows, which is most of a
+    scaled laptop screen. Wrapping lets the window narrow properly.
+    """
+    label = QLabel(text)
+    label.setWordWrap(True)
+    label.setMinimumWidth(1)          # do not let the text dictate the floor
+    return label
 
 
 def _scrollable(widget: QWidget) -> QScrollArea:

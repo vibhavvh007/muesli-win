@@ -63,9 +63,12 @@ class ModelsPanel(QWidget):
         self._baseline = 0
 
         v = QVBoxLayout(self)
-        v.addWidget(QLabel(
+        blurb = QLabel(
             "Models run on this PC and download once. Pick one and press "
-            "Download before you first dictate, so the first press is instant."))
+            "Download before you first dictate, so the first press is instant.")
+        blurb.setWordWrap(True)
+        blurb.setMinimumWidth(1)
+        v.addWidget(blurb)
 
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["Model", "Engine", "Size", "Status"])
@@ -76,6 +79,7 @@ class ModelsPanel(QWidget):
         self.table.itemSelectionChanged.connect(self._sync_buttons)
         # Bounded height: the table is inside a scrolling tab, so it must not
         # demand room for all 14 rows and push the dialog past the screen edge.
+        self.table.setMinimumWidth(1)
         self.table.setMinimumHeight(140)
         self.table.setMaximumHeight(260)
         v.addWidget(self.table)
@@ -86,6 +90,7 @@ class ModelsPanel(QWidget):
 
         self.status = QLabel("")
         self.status.setWordWrap(True)
+        self.status.setMinimumWidth(1)
         v.addWidget(self.status)
 
         row = QHBoxLayout()

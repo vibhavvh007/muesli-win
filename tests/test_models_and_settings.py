@@ -147,16 +147,38 @@ def test_activating_a_model_from_the_table_writes_config(win, cfg):
 
 
 # --- window sizing (reported: buttons off-screen, window not resizable) ------
+# The window has to be usable on the smallest machine a colleague might have.
+# Worst realistic case: a 1366x768 laptop at 150% display scaling, which leaves
+# 910x512 logical pixels, less title bar and taskbar. Anything the dialog cannot
+# shrink below that is a bug, and the bound is stated here rather than guessed.
+MAX_MIN_WIDTH = 860
+MAX_MIN_HEIGHT = 470
+
+
 def test_settings_can_shrink_small_enough_for_a_scaled_laptop(win):
     """Reported from a real install: the footer buttons were unreachable.
 
-    The Models tab gained a table in v1.0.1 and the layout's minimum height grew
-    past the screen, so the Done / Show-config-file row sat below the bottom edge
-    and the dialog refused to shrink. Each tab now scrolls instead.
+    Two causes. The Models tab gained a 14-row table in v1.0.1, pushing the
+    layout's minimum height past the screen so the Done / Show-config-file row
+    sat below the bottom edge. And long labels with no word wrap set a wide
+    minimum - on Windows that alone forced 752 px, most of a scaled laptop.
+    Tabs now scroll and the help text wraps.
     """
     hint = win.minimumSizeHint()
-    assert hint.height() <= 560, f"minimum height {hint.height()} is too tall to fit"
-    assert hint.width() <= 700, f"minimum width {hint.width()} is too wide"
+    assert hint.height() <= MAX_MIN_HEIGHT, \
+        f"minimum height {hint.height()} will not fit a 1366x768 screen at 150%"
+    assert hint.width() <= MAX_MIN_WIDTH, \
+        f"minimum width {hint.width()} will not fit a 1366x768 screen at 150%"
+
+
+def test_long_help_labels_wrap_so_they_cannot_widen_the_dialog(win):
+    """A non-wrapping sentence is what set the 752 px floor on Windows."""
+    from PySide6.QtWidgets import QLabel
+    offenders = [
+        lbl.text()[:60] for lbl in win.findChildren(QLabel)
+        if len(lbl.text()) > 45 and not lbl.wordWrap()
+    ]
+    assert not offenders, f"these labels need setWordWrap(True): {offenders}"
 
 
 def test_settings_is_user_resizable(win):
