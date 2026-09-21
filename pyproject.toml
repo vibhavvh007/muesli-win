@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "muesli-win"
-version = "1.0.1"
+version = "1.0.2"
 description = "Local-first dictation and meeting transcription for Windows"
 requires-python = ">=3.10"
 license = { text = "MIT" }

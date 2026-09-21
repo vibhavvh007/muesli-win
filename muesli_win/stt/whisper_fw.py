@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 
 import numpy as np
 
@@ -61,6 +62,23 @@ class WhisperTranscriber(Transcriber):
         self._model = None
         self._loaded = False
 
+    @staticmethod
+    def _vad_asset_available() -> bool:
+        """faster-whisper loads faster_whisper/assets/silero_vad_v6.onnx when
+        vad_filter=True. It is package DATA, not code, so a frozen build that
+        collected only submodules omits it and the first transcription dies with
+        ONNXRuntimeError NO_SUCHFILE. Check before asking for VAD rather than
+        losing the user's words to a missing optional file.
+        """
+        try:
+            import faster_whisper
+            root = Path(faster_whisper.__file__).resolve().parent
+        except Exception:
+            return False
+        return any((root / "assets" / name).exists()
+                   for name in ("silero_vad_v6.onnx", "silero_vad.onnx",
+                                "silero_encoder_v5.onnx"))
+
     def load(self) -> None:
         if self._loaded:
             return
@@ -85,8 +103,14 @@ class WhisperTranscriber(Transcriber):
                                            download_root=cache)
             else:
                 raise TranscriptionError(f"could not load {self.model_name}: {exc}") from exc
+        if self.vad_filter and not self._vad_asset_available():
+            log.warning(
+                "silero VAD asset is missing from this build; continuing without "
+                "VAD filtering (transcription still works, silence trimming does not)")
+            self.vad_filter = False
         self._loaded = True
-        log.info("whisper %s loaded in %.1fs", self.model_name, time.monotonic() - t0)
+        log.info("whisper %s loaded in %.1fs (vad=%s)", self.model_name,
+                 time.monotonic() - t0, self.vad_filter)
 
     def transcribe(self, audio: np.ndarray, *, language: str = "auto",
                    prompt: str = "") -> Transcript:
@@ -98,16 +122,30 @@ class WhisperTranscriber(Transcriber):
         lang = language if language != "auto" else self.language
         lang_arg = None if lang in ("auto", "", None) else lang
         t0 = time.monotonic()
-        try:
+
+        def run(use_vad: bool):
             segments, info = self._model.transcribe(
                 audio.astype(np.float32), language=lang_arg,
-                beam_size=self.beam_size, vad_filter=self.vad_filter,
+                beam_size=self.beam_size, vad_filter=use_vad,
                 initial_prompt=prompt or None,
                 condition_on_previous_text=False,   # stops runaway repetition
             )
-            segs = [Segment(s.start, s.end, s.text.strip()) for s in segments]
+            return [Segment(s.start, s.end, s.text.strip()) for s in segments], info
+
+        try:
+            segs, info = run(self.vad_filter)
         except Exception as exc:
-            raise TranscriptionError(f"transcription failed: {exc}") from exc
+            # Belt and braces: if VAD still fails at runtime (a missing or
+            # unreadable asset), retry without it instead of returning nothing.
+            if self.vad_filter and _is_missing_asset(exc):
+                log.warning("VAD failed (%s); retrying without it", exc)
+                self.vad_filter = False
+                try:
+                    segs, info = run(False)
+                except Exception as exc2:
+                    raise TranscriptionError(f"transcription failed: {exc2}") from exc2
+            else:
+                raise TranscriptionError(f"transcription failed: {exc}") from exc
 
         text = " ".join(s.text for s in segs).strip()
         return Transcript(
@@ -119,3 +157,9 @@ class WhisperTranscriber(Transcriber):
     def unload(self) -> None:
         self._model = None
         self._loaded = False
+
+
+def _is_missing_asset(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(token in text for token in
+               ("no_suchfile", "no such file", "silero", "vad", "onnxruntimeerror"))

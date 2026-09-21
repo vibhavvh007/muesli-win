@@ -144,3 +144,49 @@ def test_activating_a_model_from_the_table_writes_config(win, cfg):
     assert cfg.get("stt_model") == "parakeet-tdt-0.6b-v3"
     # and it warns rather than pretending it is ready
     assert "not downloaded" in panel.status.text()
+
+
+# --- window sizing (reported: buttons off-screen, window not resizable) ------
+def test_settings_can_shrink_small_enough_for_a_scaled_laptop(win):
+    """Reported from a real install: the footer buttons were unreachable.
+
+    The Models tab gained a table in v1.0.1 and the layout's minimum height grew
+    past the screen, so the Done / Show-config-file row sat below the bottom edge
+    and the dialog refused to shrink. Each tab now scrolls instead.
+    """
+    hint = win.minimumSizeHint()
+    assert hint.height() <= 560, f"minimum height {hint.height()} is too tall to fit"
+    assert hint.width() <= 700, f"minimum width {hint.width()} is too wide"
+
+
+def test_settings_is_user_resizable(win):
+    assert win.isSizeGripEnabled()
+    win.resize(520, 380)
+    assert win.width() <= 720 and win.height() <= 640
+
+
+def test_every_tab_is_inside_a_scroll_area(win):
+    from PySide6.QtWidgets import QScrollArea, QTabWidget
+    tabs = win.findChild(QTabWidget)
+    assert tabs is not None and tabs.count() == 6
+    for i in range(tabs.count()):
+        assert isinstance(tabs.widget(i), QScrollArea), \
+            f"tab {tabs.tabText(i)} is not scrollable"
+
+
+def test_footer_controls_exist_and_are_outside_the_scrolled_area(win):
+    """Done and the save indicator must stay visible whatever the tab height."""
+    from PySide6.QtWidgets import QPushButton, QScrollArea
+    buttons = [b.text() for b in win.findChildren(QPushButton)]
+    assert "Done" in buttons
+    assert "Show config file" in buttons
+    done = next(b for b in win.findChildren(QPushButton) if b.text() == "Done")
+    parent = done.parent()
+    while parent is not None:
+        assert not isinstance(parent, QScrollArea), "Done is inside a scroll area"
+        parent = parent.parent()
+
+
+def test_models_table_height_is_bounded(win):
+    t = win.models_panel.table
+    assert t.maximumHeight() <= 300, "an unbounded table is what pushed the footer off"

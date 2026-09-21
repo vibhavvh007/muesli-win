@@ -10,7 +10,7 @@ import logging
 import sys
 import time
 
-from PySide6.QtCore import QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -57,15 +58,28 @@ class SettingsWindow(QDialog):
         self.cfg = cfg
         self.setWindowTitle("Muesli Settings")
         self.setWindowIcon(icons.app_icon())
-        self.resize(720, 620)
+        self.setSizeGripEnabled(True)
 
+        # Each tab goes inside a scroll area. Without it, a tall tab (Models,
+        # once it gained the download table) forces the dialog taller than the
+        # screen: the footer buttons end up off the bottom edge and the window
+        # cannot be shrunk below its layout's minimum. Worse at 125%/150%
+        # Windows display scaling, where every widget is proportionally bigger.
         tabs = QTabWidget(self)
-        tabs.addTab(self._tab_dictation(), "Dictation")
-        tabs.addTab(self._tab_models(), "Models")
-        tabs.addTab(self._tab_dictionary(), "Dictionary")
-        tabs.addTab(self._tab_meetings(), "Meetings")
-        tabs.addTab(self._tab_interface(), "Interface")
-        tabs.addTab(self._tab_advanced(), "Advanced")
+        for widget, title in (
+            (self._tab_dictation(), "Dictation"),
+            (self._tab_models(), "Models"),
+            (self._tab_dictionary(), "Dictionary"),
+            (self._tab_meetings(), "Meetings"),
+            (self._tab_interface(), "Interface"),
+            (self._tab_advanced(), "Advanced"),
+        ):
+            tabs.addTab(_scrollable(widget), title)
+
+        # Small enough to fit a 1366x768 laptop at 150% scaling, then grown to a
+        # comfortable default only if the screen can take it.
+        self.setMinimumSize(520, 380)
+        self.resize(*_fit_to_screen(760, 640))
 
         root = QVBoxLayout(self)
         root.addWidget(tabs)
@@ -310,7 +324,8 @@ class SettingsWindow(QDialog):
         test.clicked.connect(self._test_llm)
         f2.addRow("", test)
         prompt = QPlainTextEdit(str(self.cfg.get("post_processor_system_prompt", "")))
-        prompt.setFixedHeight(120)
+        prompt.setMinimumHeight(80)
+        prompt.setMaximumHeight(160)
         prompt.textChanged.connect(
             lambda: self._set("post_processor_system_prompt", prompt.toPlainText()))
         f2.addRow("Prompt", prompt)
@@ -569,3 +584,24 @@ class SettingsWindow(QDialog):
             self, "Imported",
             f"Merged {n} settings. Restart Muesli for the model and hotkey to take effect.")
         self.changed.emit("*")
+
+
+def _scrollable(widget: QWidget) -> QScrollArea:
+    """Put a tab's contents in a vertical scroll area."""
+    area = QScrollArea()
+    area.setWidget(widget)
+    area.setWidgetResizable(True)
+    area.setFrameShape(QScrollArea.NoFrame)
+    area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    return area
+
+
+def _fit_to_screen(width: int, height: int) -> tuple[int, int]:
+    """Never open larger than the screen actually available."""
+    from PySide6.QtGui import QGuiApplication
+    screen = QGuiApplication.primaryScreen()
+    if screen is None:
+        return width, height
+    avail = screen.availableGeometry()
+    return (min(width, max(480, avail.width() - 80)),
+            min(height, max(360, avail.height() - 80)))

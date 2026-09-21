@@ -35,6 +35,20 @@ def _when(ts: float) -> str:
     return time.strftime("%d %b %H:%M", time.localtime(ts or 0))
 
 
+def _fit_to_screen(width: int, height: int) -> tuple[int, int]:
+    """Never open larger than the screen actually available.
+
+    A hard-coded size is wrong on a 1366x768 laptop at 150% scaling, where the
+    usable area is around 910x510 logical pixels.
+    """
+    screen = QGuiApplication.primaryScreen()
+    if screen is None:
+        return width, height
+    avail = screen.availableGeometry()
+    return (min(width, max(480, avail.width() - 80)),
+            min(height, max(360, avail.height() - 80)))
+
+
 class Dashboard(QMainWindow):
     summarise_requested = Signal(str)
 
@@ -44,7 +58,8 @@ class Dashboard(QMainWindow):
         self.store = store
         self.setWindowTitle("Muesli")
         self.setWindowIcon(icons.app_icon())
-        self.resize(940, 640)
+        self.setMinimumSize(560, 400)
+        self.resize(*_fit_to_screen(940, 640))
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self._tab_dictations(), "Dictations")

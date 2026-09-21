@@ -11,7 +11,11 @@ same way macOS Muesli does. That keeps the installer around 120 MB instead of 4 
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_dynamic_libs, collect_submodules
+from PyInstaller.utils.hooks import (
+    collect_data_files,
+    collect_dynamic_libs,
+    collect_submodules,
+)
 
 ROOT = Path(SPECPATH).parent
 ICON = str(ROOT / "packaging" / "muesli.ico")
@@ -34,6 +38,18 @@ for mod in ("ctranslate2", "onnxruntime", "sounddevice", "soxr", "pyaudiowpatch"
     except Exception:
         pass
 
+# Data files, NOT just modules. collect_submodules finds importable code and
+# nothing else, so a package that ships a model or a config beside its code
+# gets silently left out of the bundle and fails at runtime with NO_SUCHFILE.
+# faster-whisper ships faster_whisper/assets/silero_vad_v6.onnx, which is what
+# vad_filter=True loads on the first transcription.
+datas = []
+for mod in ("faster_whisper", "onnx_asr", "onnxruntime", "ctranslate2", "soxr"):
+    try:
+        datas += collect_data_files(mod)
+    except Exception:
+        pass
+
 # Qt modules we never use; dropping them saves ~90 MB.
 excludes = [
     "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtQuick",
@@ -46,7 +62,7 @@ gui_a = Analysis(
     [str(ROOT / "run_muesli.py")],
     pathex=[str(ROOT)],
     binaries=binaries,
-    datas=[],
+    datas=datas,
     hiddenimports=hidden,
     excludes=excludes,
     noarchive=False,
@@ -66,7 +82,7 @@ cli_a = Analysis(
     [str(ROOT / "packaging" / "cli_entry.py")],
     pathex=[str(ROOT)],
     binaries=[],
-    datas=[],
+    datas=datas,
     hiddenimports=hidden,
     excludes=excludes,
     noarchive=False,

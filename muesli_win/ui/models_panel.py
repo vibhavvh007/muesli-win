@@ -74,6 +74,10 @@ class ModelsPanel(QWidget):
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.itemSelectionChanged.connect(self._sync_buttons)
+        # Bounded height: the table is inside a scrolling tab, so it must not
+        # demand room for all 14 rows and push the dialog past the screen edge.
+        self.table.setMinimumHeight(140)
+        self.table.setMaximumHeight(260)
         v.addWidget(self.table)
 
         self.progress = QProgressBar()
