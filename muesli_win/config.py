@@ -37,7 +37,49 @@ VK = {
     "F15": 0x7E,
     "Scroll Lock": 0x91,
     "Pause": 0x13,
+    "Space": 0x20,
+    "Tab": 0x09,
+    "Insert": 0x2D,
+    "Home": 0x24,
+    "End": 0x23,
+    "Page Up": 0x21,
+    "Page Down": 0x22,
+    "Backtick": 0xC0,
+    "Semicolon": 0xBA,
+    "Quote": 0xDE,
+    "Comma": 0xBC,
+    "Period": 0xBE,
+    "Slash": 0xBF,
+    "Backslash": 0xDC,
+    "Left Bracket": 0xDB,
+    "Right Bracket": 0xDD,
+    "Minus": 0xBD,
+    "Equals": 0xBB,
 }
+
+# Letters and function keys, added programmatically to keep the table readable.
+for _i, _c in enumerate("ABCDEFGHIJKLMNOPQRSTUVWXYZ"):
+    VK[_c] = 0x41 + _i
+for _n in range(1, 13):
+    VK[f"F{_n}"] = 0x6F + _n          # F1 = 0x70
+
+MODIFIERS = ("ctrl", "alt", "shift", "win")
+
+# Keys usable as the MAIN key of a combination. Bare modifiers are excluded:
+# a modifier cannot also be the main key of a chord.
+COMBO_MAIN_KEYS = (
+    [f"F{n}" for n in range(1, 16)]
+    + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+    + ["Space", "Tab", "Backtick", "Semicolon", "Quote", "Comma", "Period",
+       "Slash", "Backslash", "Left Bracket", "Right Bracket", "Minus",
+       "Equals", "Insert", "Home", "End", "Page Up", "Page Down",
+       "Scroll Lock", "Pause", "Caps Lock"]
+)
+
+# The Fn key is resolved inside the keyboard's own firmware on essentially
+# every laptop: it never produces a scancode, so Windows - and therefore any
+# application - cannot see it. It cannot form part of a hotkey.
+FN_IS_NOT_BINDABLE = True
 VK_NAME = {v: k for k, v in VK.items()}
 
 # macOS keyCode -> the nearest sane Windows key.

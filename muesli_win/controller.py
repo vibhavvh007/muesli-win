@@ -27,7 +27,11 @@ from .text import postprocess as pp
 from .text.dictionary import Dictionary
 from .text.llm import LLMError, chat, target_from_config
 from .winput.hook import KeyboardHook, layout_has_altgr
-from .winput.injector import TextInjector, foreground_window_info
+from .winput.injector import (
+    TextInjector,
+    diagnose_injection_failure,
+    foreground_window_info,
+)
 from .winput.selection import read_selection
 from .winput.statemachine import Action, HotkeyStateMachine
 
@@ -66,7 +70,8 @@ class DictationController:
             double_tap_enabled=bool(cfg.get("enable_double_tap_dictation", True)),
             suppress_key=bool(cfg.get("win_suppress_hotkey_passthrough", True)),
         )
-        self.hook = KeyboardHook(self.machine, self._hotkey_vk(), self._on_action)
+        self.hook = KeyboardHook(self.machine, self._hotkey_vk(), self._on_action,
+                                 hotkey_modifiers=self._hotkey_mods())
         self.transcriber = LazyTranscriber(cfg, purpose="dictation")
         self.injector = TextInjector(
             method=cfg.get("win_inject_method", "auto"),
@@ -114,9 +119,18 @@ class DictationController:
         hk = self.cfg.get("dictation_hotkey", {})
         return int(hk.get("vk", 0xA5))
 
+    def _hotkey_mods(self) -> set[str]:
+        hk = self.cfg.get("dictation_hotkey", {}) or {}
+        mods = hk.get("modifiers") or []
+        return {str(m).lower() for m in mods if str(m).lower() in
+                ("ctrl", "alt", "shift", "win")}
+
     def _altgr_conflict(self) -> bool:
+        # Only a BARE Right Alt swallows AltGr. As part of a combination the key
+        # still reaches the layout normally, so there is nothing to warn about.
         return (self.cfg.get("win_altgr_guard", True)
                 and self._hotkey_vk() == 0xA5
+                and not self._hotkey_mods()
                 and self.cfg.get("win_suppress_hotkey_passthrough", True)
                 and layout_has_altgr())
 
@@ -124,7 +138,8 @@ class DictationController:
         if key == "custom_words":
             self.dictionary = Dictionary(value or [])
         elif key == "dictation_hotkey":
-            self.hook.set_hotkey(int((value or {}).get("vk", 0xA5)))
+            self.hook.set_hotkey(int((value or {}).get("vk", 0xA5)),
+                                 self._hotkey_mods())
         elif key in ("stt_backend", "stt_model", "whisper_language", "whisper_model",
                      "win_compute_device", "win_compute_type"):
             self.transcriber.reload()
@@ -304,9 +319,11 @@ class DictationController:
 
             self.events.fire("on_text", text)
             if not self.injector.inject(text):
-                self.events.fire("on_error", "Could not type into the focused window. "
-                                              "If it is running as administrator, Muesli "
-                                              "must be too.")
+                # Say what actually went wrong rather than assuming elevation,
+                # and tell the user where their words are.
+                self.events.fire("on_error", diagnose_injection_failure(
+                    getattr(self.injector, "last_error", 0),
+                    getattr(self.injector, "stranded_on_clipboard", False)))
             try:
                 self.store.add_dictation(
                     raw_text=raw, text=text, duration_ms=duration_ms,

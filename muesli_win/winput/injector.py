@@ -59,8 +59,17 @@ class TextInjector:
     def __init__(self, method: str = "auto", clipboard_restore_delay_ms: int = 400) -> None:
         self.method = method
         self.clipboard_restore_delay_ms = clipboard_restore_delay_ms
+        self.last_error = 0
+        self.stranded_on_clipboard = False
         self._user32 = ctypes.WinDLL("user32", use_last_error=True) if IS_WINDOWS else None
         self._kernel32 = ctypes.WinDLL("kernel32", use_last_error=True) if IS_WINDOWS else None
+        if IS_WINDOWS:
+            # Declared rather than left to ctypes' defaults: the array pointer and
+            # the size must be passed exactly or SendInput silently inserts nothing.
+            self._user32.SendInput.argtypes = [wintypes.UINT,
+                                               ctypes.POINTER(INPUT),
+                                               ctypes.c_int]
+            self._user32.SendInput.restype = wintypes.UINT
 
     # -- public ------------------------------------------------------------
     def inject(self, text: str) -> bool:
@@ -70,20 +79,26 @@ class TextInjector:
             log.info("[dry-run] would type: %s", text[:120])
             return True
 
+        self.last_error = 0
         method = self.method
         if method == "auto":
             method = "clipboard" if len(text) > SENDINPUT_MAX_CHARS else "sendinput"
 
-        if method == "clipboard":
-            if self._paste(text):
+        order = ("clipboard", "sendinput") if method == "clipboard" \
+            else ("sendinput", "clipboard")
+        for how in order:
+            if (self._paste(text) if how == "clipboard" else self._type(text)):
                 return True
-            log.warning("clipboard paste failed; falling back to SendInput")
-            return self._type(text)
+            log.warning("%s injection failed; trying the next method", how)
 
-        if self._type(text):
-            return True
-        log.warning("SendInput failed; falling back to clipboard paste")
-        return self._paste(text)
+        # Everything failed. Leave the text on the clipboard so the dictation is
+        # recoverable with one Ctrl+V - losing a user's words is the one outcome
+        # worth avoiding at all costs.
+        self.stranded_on_clipboard = self._clipboard_set(text)
+        log.error("could not type into the focused window (win32 error %d); "
+                  "text %s left on the clipboard", self.last_error,
+                  "was" if self.stranded_on_clipboard else "could NOT be")
+        return False
 
     # -- SendInput ---------------------------------------------------------
     def _type(self, text: str) -> bool:
@@ -125,14 +140,25 @@ class TextInjector:
         return [down, up]
 
     def _send(self, events: list) -> bool:
+        ok, _err = self._send_ex(events)
+        return ok
+
+    def _send_ex(self, events: list) -> tuple[bool, int]:
+        """-> (ok, win32 error). Retries once: a focus change in flight makes
+        SendInput fail transiently, and one retry costs 120 ms."""
         arr = (INPUT * len(events))(*events)
-        sent = self._user32.SendInput(len(events), arr, ctypes.sizeof(INPUT))
-        if sent != len(events):
+        for attempt in (0, 1):
+            ctypes.set_last_error(0)
+            sent = self._user32.SendInput(len(events), arr, ctypes.sizeof(INPUT))
+            if sent == len(events):
+                return True, 0
             err = ctypes.get_last_error()
-            log.error("SendInput sent %d/%d (error %d%s)", sent, len(events), err,
-                      "; target window is probably elevated" if err == 5 else "")
-            return False
-        return True
+            self.last_error = err
+            log.error("SendInput sent %d/%d (win32 error %d)%s", sent, len(events), err,
+                      " - retrying" if attempt == 0 else "")
+            if attempt == 0:
+                time.sleep(0.12)
+        return False, self.last_error
 
     # -- clipboard ---------------------------------------------------------
     def _paste(self, text: str) -> bool:
@@ -264,3 +290,106 @@ def foreground_window_info() -> tuple[str, str]:
     except Exception:
         log.exception("foreground window probe failed")
         return "", ""
+
+
+# --- why did injection fail? ------------------------------------------------
+# Windows UIPI blocks synthetic input from a lower integrity process to a higher
+# one. The old message asserted that was the cause without checking, which sends
+# someone to "run as administrator" even when elevation is not the problem.
+
+TOKEN_QUERY = 0x0008
+TokenIntegrityLevel = 25
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+INTEGRITY_NAMES = {0x0000: "untrusted", 0x1000: "low", 0x2000: "medium",
+                   0x3000: "high", 0x4000: "system"}
+
+
+def _integrity_of(handle) -> int | None:
+    """Integrity RID for an open process handle, or None if unreadable."""
+    if not IS_WINDOWS:
+        return None
+    advapi = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    token = wintypes.HANDLE()
+    if not advapi.OpenProcessToken(handle, TOKEN_QUERY, ctypes.byref(token)):
+        return None
+    try:
+        size = wintypes.DWORD(0)
+        advapi.GetTokenInformation(token, TokenIntegrityLevel, None, 0,
+                                   ctypes.byref(size))
+        if not size.value:
+            return None
+        buf = ctypes.create_string_buffer(size.value)
+        if not advapi.GetTokenInformation(token, TokenIntegrityLevel, buf,
+                                          size, ctypes.byref(size)):
+            return None
+        # TOKEN_MANDATORY_LABEL { SID_AND_ATTRIBUTES { PSID Sid; DWORD Attributes } }
+        sid = ctypes.c_void_p.from_buffer(buf).value
+        advapi.GetSidSubAuthorityCount.restype = ctypes.POINTER(ctypes.c_ubyte)
+        advapi.GetSidSubAuthority.restype = ctypes.POINTER(wintypes.DWORD)
+        count = advapi.GetSidSubAuthorityCount(ctypes.c_void_p(sid)).contents.value
+        return int(advapi.GetSidSubAuthority(ctypes.c_void_p(sid), count - 1).contents.value)
+    except Exception:
+        log.debug("integrity probe failed", exc_info=True)
+        return None
+    finally:
+        kernel32.CloseHandle(token)
+
+
+def own_integrity() -> int | None:
+    if not IS_WINDOWS:
+        return None
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    return _integrity_of(kernel32.GetCurrentProcess())
+
+
+def foreground_integrity() -> tuple[int | None, str]:
+    """(integrity RID, process name) of the focused window."""
+    if not IS_WINDOWS:
+        return None, ""
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return None, ""
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return None, foreground_window_info()[0]
+    try:
+        return _integrity_of(handle), foreground_window_info()[0]
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def diagnose_injection_failure(win32_error: int = 0,
+                               on_clipboard: bool = False) -> str:
+    """A message that reflects what is actually wrong."""
+    recovery = (" Your text is on the clipboard - press Ctrl+V to paste it."
+                if on_clipboard else
+                " The text is saved in the Muesli dashboard.")
+
+    app, _title = foreground_window_info()
+    where = f" ({app})" if app else ""
+    mine = own_integrity()
+    theirs, _ = foreground_integrity()
+
+    if mine is not None and theirs is not None and theirs > mine:
+        return (f"{INTEGRITY_NAMES.get(theirs, 'that')}-integrity window{where} "
+                "refused input from Muesli. Windows blocks this unless Muesli "
+                "runs with the same privileges - right-click Muesli and choose "
+                "Run as administrator." + recovery)
+
+    if win32_error == 5:
+        return ("Windows refused the keystrokes (access denied)" + where +
+                ". This is usually an elevated or protected window." + recovery)
+
+    if win32_error:
+        return (f"Windows rejected the keystrokes (error {win32_error})" + where +
+                "." + recovery)
+
+    return ("Could not type into the focused window" + where +
+            ". Try switching Typing method to Clipboard paste in "
+            "Settings > Advanced." + recovery)

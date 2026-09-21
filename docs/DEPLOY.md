@@ -61,7 +61,7 @@ via **Settings → Advanced**. This keeps everything on the machine.
   "stt_backend": "whisper",
   "stt_model": "large-v3-turbo",
   "whisper_language": "auto",
-  "dictation_hotkey": { "vk": 163, "label": "Right Ctrl" },
+  "dictation_hotkey": { "vk": 163, "label": "Right Ctrl", "modifiers": [] },
   "enable_double_tap_dictation": true,
   "meeting_recording_save_policy": "never",
   "meeting_summary_backend": "ollama",
@@ -88,7 +88,7 @@ nothing.
 
 > **Muesli — dictation for Windows**
 >
-> 1. Download the installer, extract the `.zip`, run `Muesli-Setup-1.0.4.exe`.
+> 1. Download the installer, extract the `.zip`, run `Muesli-Setup-1.1.0.exe`.
 > 2. Windows will warn that the publisher is unknown. Click **More info → Run anyway**.
 > 3. On first launch, open **Settings → Models**, select `parakeet-tdt-0.6b-v3`
 >    and press **Download** (640 MB, fastest), or `large-v3-turbo` (1.6 GB) if you

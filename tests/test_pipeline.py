@@ -87,9 +87,36 @@ def test_injection_failure_is_reported_not_swallowed(rig):
     seen = []
     ctl.events = Events(on_error=seen.append)
     run(ctl, "hello", injector=FakeInjector(ok=False))
-    assert seen and "administrator" in seen[0]
+    assert seen, "a failed injection must be reported, not swallowed"
     # the dictation is still saved so the text is recoverable from history
     assert store.last_dictation()["text"] == "Hello"
+
+
+def test_failure_message_tells_the_user_where_their_words_went(rig):
+    """The old message asserted 'run as administrator' without checking, which
+    is wrong whenever elevation is not the cause. What the user always needs is
+    where to find the text they just dictated."""
+    cfg, store, ctl = rig
+    seen = []
+    ctl.events = Events(on_error=seen.append)
+    inj = FakeInjector(ok=False)
+    inj.stranded_on_clipboard = True
+    inj.last_error = 0
+    run(ctl, "hello", injector=inj)
+    assert "clipboard" in seen[0].lower()
+    assert "Ctrl+V" in seen[0]
+
+
+def test_failure_message_points_at_history_when_the_clipboard_also_failed(rig):
+    cfg, store, ctl = rig
+    seen = []
+    ctl.events = Events(on_error=seen.append)
+    inj = FakeInjector(ok=False)
+    inj.stranded_on_clipboard = False
+    inj.last_error = 5
+    run(ctl, "hello", injector=inj)
+    assert "dashboard" in seen[0].lower()
+    assert "access denied" in seen[0].lower()
 
 
 def test_transcriber_error_surfaces_and_sets_error_state(rig):

@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..audio.capture import list_input_devices, list_loopback_devices
-from ..config import VK, VK_NAME
+from ..config import COMBO_MAIN_KEYS, VK, VK_NAME
 from ..stt.registry import catalog
 from ..text import llm
 from ..winput.hook import layout_has_altgr
@@ -189,21 +189,60 @@ class SettingsWindow(QDialog):
         w = QWidget()
         form = QFormLayout(w)
 
+        # --- hotkey: a key, optionally with modifiers ---------------------
         self.hotkey_box = QComboBox()
-        for name in ("Right Alt", "Right Ctrl", "Left Ctrl", "Right Shift", "Right Win",
-                     "Caps Lock", "F13", "F14", "F15", "Scroll Lock", "Pause"):
+        for name in ("Right Alt", "Right Ctrl", "Left Ctrl", "Right Shift",
+                     "Right Win", "Caps Lock"):
             self.hotkey_box.addItem(name, VK[name])
+        self.hotkey_box.insertSeparator(self.hotkey_box.count())
+        for name in COMBO_MAIN_KEYS:
+            if name in VK:
+                self.hotkey_box.addItem(name, VK[name])
         current = int(self.cfg.get("dictation_hotkey", {}).get("vk", VK["Right Alt"]))
         idx = self.hotkey_box.findData(current)
         self.hotkey_box.setCurrentIndex(idx if idx >= 0 else 0)
         self.hotkey_box.currentIndexChanged.connect(self._on_hotkey_changed)
-        form.addRow("Dictation hotkey", self.hotkey_box)
+        form.addRow("Dictation key", self.hotkey_box)
+
+        saved_mods = {str(m).lower() for m in
+                      (self.cfg.get("dictation_hotkey", {}).get("modifiers") or [])}
+        self.mod_boxes: dict[str, QCheckBox] = {}
+        mod_row = QWidget()
+        mod_layout = QHBoxLayout(mod_row)
+        mod_layout.setContentsMargins(0, 0, 0, 0)
+        for mod, label in (("ctrl", "Ctrl"), ("alt", "Alt"),
+                           ("shift", "Shift"), ("win", "Win")):
+            box = QCheckBox(label)
+            box.setChecked(mod in saved_mods)
+            box.toggled.connect(self._on_hotkey_changed)
+            self.mod_boxes[mod] = box
+            mod_layout.addWidget(box)
+        mod_layout.addStretch(1)
+        form.addRow("Hold with", mod_row)
+
+        self.hotkey_preview = QLabel()
+        self.hotkey_preview.setStyleSheet("font-weight:600;")
+        form.addRow("Shortcut", self.hotkey_preview)
 
         self.altgr_warning = QLabel()
         self.altgr_warning.setWordWrap(True)
         self.altgr_warning.setMinimumWidth(1)
         self.altgr_warning.setStyleSheet("color:#b23b3b;")
         form.addRow("", self.altgr_warning)
+
+        fn_note = _hint(
+            "Tick nothing to use the key on its own. The Fn key cannot be used: "
+            "laptop keyboards handle it in their own firmware, so Windows never "
+            "sees it and no application can bind it. Win+Space or Ctrl+Alt+D "
+            "work well instead.")
+        fn_note.setStyleSheet("color:#666;")
+        form.addRow("", fn_note)
+
+        # Show the current binding immediately, not only after a change.
+        saved = self.cfg.get("dictation_hotkey", {})
+        self.hotkey_preview.setText(_shortcut_label(
+            int(saved.get("vk", VK["Right Alt"])),
+            [str(m).lower() for m in (saved.get("modifiers") or [])]))
         self._refresh_altgr_warning()
 
         form.addRow("Hold threshold", self._bind_spin("hotkey_trigger_threshold_ms", 80, 1200, " ms"))
@@ -250,12 +289,20 @@ class SettingsWindow(QDialog):
 
     def _on_hotkey_changed(self) -> None:
         vk = self.hotkey_box.currentData()
-        self._set("dictation_hotkey", {"vk": int(vk), "label": VK_NAME.get(int(vk), "?")})
+        if vk is None:                       # the separator row
+            return
+        mods = [m for m, box in self.mod_boxes.items() if box.isChecked()]
+        label = _shortcut_label(int(vk), mods)
+        self._set("dictation_hotkey",
+                  {"vk": int(vk), "label": label, "modifiers": mods})
+        self.hotkey_preview.setText(label)
         self._refresh_altgr_warning()
 
     def _refresh_altgr_warning(self) -> None:
-        vk = int(self.cfg.get("dictation_hotkey", {}).get("vk", VK["Right Alt"]))
-        if vk == VK["Right Alt"] and layout_has_altgr():
+        hk = self.cfg.get("dictation_hotkey", {})
+        vk = int(hk.get("vk", VK["Right Alt"]))
+        has_mods = bool(hk.get("modifiers"))
+        if vk == VK["Right Alt"] and not has_mods and layout_has_altgr():
             self.altgr_warning.setText(
                 "Your keyboard layout uses Right Alt as AltGr. While Muesli holds that "
                 "key you will not be able to type AltGr characters (@ \\ € …). "
@@ -619,3 +666,12 @@ def _fit_to_screen(width: int, height: int) -> tuple[int, int]:
     avail = screen.availableGeometry()
     return (min(width, max(480, avail.width() - 80)),
             min(height, max(360, avail.height() - 80)))
+
+
+def _shortcut_label(vk: int, modifiers: list[str]) -> str:
+    """'Win + Space', 'Ctrl + Alt + D', or just 'Right Alt'."""
+    order = ("ctrl", "alt", "shift", "win")
+    pretty = {"ctrl": "Ctrl", "alt": "Alt", "shift": "Shift", "win": "Win"}
+    parts = [pretty[m] for m in order if m in modifiers]
+    parts.append(VK_NAME.get(vk, f"VK 0x{vk:02X}"))
+    return " + ".join(parts)

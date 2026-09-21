@@ -95,9 +95,12 @@ class KeyboardHook:
 
     def __init__(self, machine: HotkeyStateMachine, hotkey_vk: int,
                  on_action: Callable[[Action, str], None],
-                 *, escape_cancels: bool = True) -> None:
+                 *, escape_cancels: bool = True,
+                 hotkey_modifiers: set[str] | None = None) -> None:
         self.machine = machine
         self.hotkey_vk = hotkey_vk
+        # Empty set = a bare key, which is the original behaviour.
+        self.hotkey_mods: frozenset[str] = frozenset(hotkey_modifiers or ())
         self.on_action = on_action
         self.escape_cancels = escape_cancels
 
@@ -122,9 +125,10 @@ class KeyboardHook:
     def clear_combos(self) -> None:
         self._combos.clear()
 
-    def set_hotkey(self, vk: int) -> None:
+    def set_hotkey(self, vk: int, modifiers: set[str] | None = None) -> None:
         with self._lock:
             self.hotkey_vk = vk
+            self.hotkey_mods = frozenset(modifiers or ())
             self.machine.reset()
 
     def start(self) -> bool:
@@ -197,8 +201,14 @@ class KeyboardHook:
             return
         if down:
             self._mods.add(name)
-        else:
-            self._mods.discard(name)
+            return
+        self._mods.discard(name)
+        # Letting go of Ctrl in a Ctrl+D hold should end the dictation, the same
+        # as letting go of D. Hands-free is a toggle, so it is left running.
+        if (name in self.hotkey_mods
+                and self.machine.state.name in ("PENDING", "HOLDING")):
+            d = self.machine.force_stop()
+            self._emit(d.action, "modifier-release")
 
     def _handle(self, vk: int, is_down: bool, now_ms: int) -> bool:
         """Returns True to suppress the key event. Must stay fast."""
@@ -209,6 +219,14 @@ class KeyboardHook:
             hotkey_vk = self.hotkey_vk
 
         if vk == hotkey_vk:
+            if is_down and not self.hotkey_mods.issubset(self._mods):
+                # The combination is not held, so this is an ordinary keypress.
+                # Pass it through untouched - binding Ctrl+D must not stop D
+                # typing a letter.
+                return False
+            if not is_down and not self.machine.recording \
+                    and self.machine.state.name == "IDLE":
+                return False
             d = self.machine.key_down(now_ms) if is_down else self.machine.key_up(now_ms)
             self._emit(d.action, "hotkey")
             if is_down and self.machine.state.name == "PENDING":
