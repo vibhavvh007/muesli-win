@@ -51,6 +51,14 @@ def db_path() -> Path:
 
 
 def models_dir() -> Path:
+    """Where speech models live.
+
+    Overridable with MUESLI_MODELS_DIR: the models run to several gigabytes and
+    plenty of laptops have a small system drive and a roomy second one.
+    """
+    override = os.environ.get("MUESLI_MODELS_DIR")
+    if override:
+        return Path(override)
     return cache_dir() / "models"
 
 

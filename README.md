@@ -5,7 +5,7 @@ Windows build of the feature set of [Muesli](https://github.com/pHequals7/muesli
 (macOS, MIT). Speech-to-text runs on this PC; nothing is uploaded unless you
 deliberately choose a hosted engine.
 
-Ships as `Muesli-Setup-1.1.1.exe` — a per-user installer, no admin rights needed.
+Ships as `Muesli-Setup-1.2.0.exe` — a per-user installer, no admin rights needed.
 
 ```
 Hold  Right Alt          talk, release, the text types itself
@@ -48,7 +48,7 @@ application can capture it.
 
 ## Install
 
-Download `Muesli-Setup-1.1.1.exe` from the
+Download `Muesli-Setup-1.2.0.exe` from the
 [Releases](../../releases) page and run it. Windows 10 1809 or later, 64-bit.
 
 On first launch open **Settings → Models**, pick a model and press **Download**.
@@ -69,6 +69,37 @@ Or pre-download from the command line:
 muesli-cli models list
 muesli-cli models download parakeet-tdt-0.6b-v3 --use
 ```
+
+### Will this PC keep up?
+
+Don't guess from the spec sheet — measure it. **Settings → Models → Test on this
+PC**, or:
+
+```powershell
+muesli-cli benchmark --model parakeet-tdt-0.6b-v3 --model large-v3-turbo --format text
+```
+
+It transcribes 30 seconds of speech-shaped audio and reports the **real-time
+factor** — compute seconds per second of audio — which is the number that
+actually decides whether a model is usable:
+
+```
+parakeet-tdt-0.6b-v3 (parakeet/cpu)
+  This model is fast on this PC  -  31.2x realtime
+  A 30-second dictation appears about 1 second after you stop talking.
+  Meeting transcription keeps up with 97% headroom, so a meeting of any length is fine.
+```
+
+Why RTF and not the CPU model: two laptops with the same chip differ by
+thermals, power plan and what else is running, so the only honest answer comes
+from running the model there. It also gives a hard boundary for meetings —
+below 1.0 the transcription queue drains and a recording of any length is safe;
+at or above 1.0 audio arrives faster than it can be transcribed and the backlog
+grows for as long as you keep recording.
+
+The report also flags being on battery (Windows throttles), too little free RAM
+for the model, and recommends the most accurate model your machine runs
+comfortably.
 
 Models land in `%LOCALAPPDATA%\Muesli\cache\models`.
 
@@ -158,6 +189,8 @@ muesli-cli dictations get last
 muesli-cli meetings list --limit 5
 muesli-cli meetings summarise last --template client_call
 muesli-cli meetings export last --format pdf --content both
+muesli-cli benchmark --format text                # can this PC keep up?
+muesli-cli benchmark --format text                # can this PC keep up?
 muesli-cli config set stt_model '"large-v3-turbo"'
 ```
 
@@ -172,7 +205,7 @@ git clone <this repo>; cd muesli-win
 powershell -ExecutionPolicy Bypass -File packaging\build.ps1
 ```
 
-Produces `dist\Muesli\Muesli.exe` and `dist\Muesli-Setup-1.1.1.exe`.
+Produces `dist\Muesli\Muesli.exe` and `dist\Muesli-Setup-1.2.0.exe`.
 See [docs/BUILD.md](docs/BUILD.md) for the detail, and
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it fits together.
 

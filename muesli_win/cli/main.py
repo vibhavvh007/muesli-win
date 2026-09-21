@@ -10,6 +10,7 @@ against the other:
     muesli-cli meetings get <id>
     muesli-cli meetings update-notes <id> --file notes.md
     muesli-cli meetings export <id> [--format markdown|pdf] [--content notes|transcript|both]
+    muesli-cli benchmark [--model M ...] [--seconds N]
     muesli-cli models list
     muesli-cli models download <name>
     muesli-cli config get|set|path
@@ -178,6 +179,53 @@ def cmd_meetings(args) -> int:
     return 0
 
 
+def cmd_benchmark(args) -> int:
+    from ..bench import as_dict, benchmark, interpret, probe_specs, recommend
+
+    specs = probe_specs()
+    if args.specs_only:
+        _out({"specs": specs.__dict__})
+        return 0
+
+    cfg = Config().load()
+    models = args.model or [cfg.get("stt_model", "large-v3")]
+    print(f"machine: {specs.summary()}", file=sys.stderr)
+    print(f"measuring {len(models)} model(s) on {args.seconds:.0f}s of audio - "
+          "this downloads anything missing and takes a while", file=sys.stderr)
+
+    results = []
+    for name in models:
+        print(f"  {name} ...", file=sys.stderr, flush=True)
+        r = benchmark(name, device=cfg.get("win_compute_device", "auto"),
+                      compute=cfg.get("win_compute_type", "auto"),
+                      seconds=args.seconds)
+        results.append(r)
+        i = interpret(r)
+        print(f"    {i['headline']}"
+              + (f" ({i['speed']})" if i.get('speed') else ""), file=sys.stderr)
+
+    payload = {"specs": specs.__dict__,
+               "results": [as_dict(r) for r in results],
+               "recommendation": recommend(
+                   results, cfg.get("whisper_language", "auto"))}
+    if args.format == "text":
+        print(f"Machine: {specs.summary()}")
+        for r in results:
+            i = interpret(r)
+            print(f"\n{r.model} ({r.backend}/{r.device})")
+            print(f"  {i['headline']}" + (f"  -  {i['speed']}" if i.get('speed') else ""))
+            if i.get("dictation"):
+                print(f"  {i['dictation']}")
+            if i.get("meetings"):
+                print(f"  {i['meetings']}")
+            for w in i.get("warnings", []):
+                print(f"  ! {w}")
+        print(f"\n{payload['recommendation']}")
+    else:
+        _out(payload)
+    return 0
+
+
 def cmd_models(args) -> int:
     from ..stt import download as dl
     if args.sub == "list":
@@ -260,6 +308,8 @@ def cmd_spec(_args) -> int:
                            "options": ["--model", "--backend", "--language", "--format"]},
             "dictations": {"sub": ["list", "get"]},
             "meetings": {"sub": ["list", "get", "update-notes", "export", "summarise"]},
+            "benchmark": {"options": ["--model", "--seconds", "--specs-only",
+                                      "--format"]},
             "models": {"sub": ["list", "download", "path"]},
             "config": {"sub": ["get", "set", "path"]},
             "devices": {}, "info": {}, "spec": {},
@@ -308,6 +358,16 @@ def build_parser() -> argparse.ArgumentParser:
     msum.add_argument("id")
     msum.add_argument("--template", default="auto")
     m.set_defaults(func=cmd_meetings)
+
+    b = sub.add_parser("benchmark",
+                       help="measure how well this PC handles a model")
+    b.add_argument("--model", action="append",
+                   help="repeatable; defaults to the configured dictation model")
+    b.add_argument("--seconds", type=float, default=30.0)
+    b.add_argument("--specs-only", action="store_true",
+                   help="report the machine without running a model")
+    b.add_argument("--format", choices=["json", "text"], default="json")
+    b.set_defaults(func=cmd_benchmark)
 
     mo = sub.add_parser("models", help="list or pre-download speech models")
     mos = mo.add_subparsers(dest="sub", required=True)

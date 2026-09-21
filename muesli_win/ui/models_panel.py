@@ -35,6 +35,24 @@ from ..stt import download as dl
 log = logging.getLogger(__name__)
 
 
+class _BenchWorker(QObject):
+    done = Signal(dict)
+    failed = Signal(str)
+
+    def __init__(self, model: str, device: str, compute: str) -> None:
+        super().__init__()
+        self.model, self.device, self.compute = model, device, compute
+
+    def run(self) -> None:
+        try:
+            from ..bench import benchmark, interpret
+            r = benchmark(self.model, device=self.device, compute=self.compute)
+            payload = {"result": r, "interpretation": interpret(r)}
+            self.done.emit(payload)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class _Worker(QObject):
     done = Signal(dict)
     failed = Signal(str)
@@ -61,6 +79,9 @@ class ModelsPanel(QWidget):
         self._worker: _Worker | None = None
         self._downloading: str = ""
         self._baseline = 0
+        self._benchmarking = False
+        self._bench_thread: QThread | None = None
+        self._bench_worker: _BenchWorker | None = None
 
         v = QVBoxLayout(self)
         blurb = QLabel(
@@ -98,12 +119,18 @@ class ModelsPanel(QWidget):
         self.btn_download.clicked.connect(self._download)
         self.btn_use = QPushButton("Use for dictation")
         self.btn_use.clicked.connect(self._use)
+        self.btn_test = QPushButton("Test on this PC")
+        self.btn_test.setToolTip(
+            "Measure how fast the selected model actually runs here, and what "
+            "that means for dictation and meetings")
+        self.btn_test.clicked.connect(self._benchmark)
         self.btn_folder = QPushButton("Open folder")
         self.btn_folder.clicked.connect(self._open_folder)
         self.btn_refresh = QPushButton("Refresh")
         self.btn_refresh.clicked.connect(self.refresh)
         row.addWidget(self.btn_download)
         row.addWidget(self.btn_use)
+        row.addWidget(self.btn_test)
         row.addStretch(1)
         row.addWidget(self.btn_folder)
         row.addWidget(self.btn_refresh)
@@ -145,11 +172,85 @@ class ModelsPanel(QWidget):
         return item.data(Qt.UserRole) if item else ""
 
     def _sync_buttons(self) -> None:
-        busy = bool(self._downloading)
+        busy = bool(self._downloading) or self._benchmarking
         has = bool(self._selected())
         self.btn_download.setEnabled(has and not busy)
         self.btn_use.setEnabled(has and not busy)
+        self.btn_test.setEnabled(has and not busy)
         self.btn_refresh.setEnabled(not busy)
+
+    # -- benchmark ---------------------------------------------------------
+    def _benchmark(self) -> None:
+        name = self._selected()
+        if not name or self._benchmarking:
+            return
+        from ..bench import probe_specs
+        if not dl._looks_installed(dl.catalog().get(name, {})):
+            if QMessageBox.question(
+                    self, "Test on this PC",
+                    f"{name} is not downloaded yet. Testing it will download it "
+                    "first. Continue?") != QMessageBox.Yes:
+                return
+
+        self._benchmarking = True
+        self._sync_buttons()
+        self.progress.setRange(0, 0)            # indeterminate
+        self.progress.setVisible(True)
+        self.status.setText(
+            f"Measuring {name} on this PC ({probe_specs().summary()}) - "
+            "transcribing 30 seconds of audio, please wait\u2026")
+
+        self._bench_thread = QThread(self)
+        self._bench_worker = _BenchWorker(name, self.cfg.get("win_compute_device", "auto"),
+                                          self.cfg.get("win_compute_type", "auto"))
+        self._bench_worker.moveToThread(self._bench_thread)
+        self._bench_thread.started.connect(self._bench_worker.run)
+        self._bench_worker.done.connect(self._bench_done)
+        self._bench_worker.failed.connect(self._bench_failed)
+        self._bench_thread.start()
+
+    def _bench_cleanup(self) -> None:
+        self.progress.setRange(0, 100)
+        self.progress.setVisible(False)
+        if self._bench_thread is not None:
+            self._bench_thread.quit()
+            self._bench_thread.wait(5000)
+        self._bench_thread = None
+        self._bench_worker = None
+        self._benchmarking = False
+        self._sync_buttons()
+
+    def _bench_done(self, payload: dict) -> None:
+        r, i = payload["result"], payload["interpretation"]
+        self._bench_cleanup()
+        if not r.ok:
+            QMessageBox.warning(self, "Test failed", r.error or "unknown error")
+            return
+        lines = [i["headline"], ""]
+        if i.get("speed"):
+            lines.append(f"Speed: {i['speed']} ({r.backend} on {r.device})")
+        lines += ["", i["dictation"], "", i["meetings"]]
+        for w in i.get("warnings", []):
+            lines += ["", "\u26a0 " + w]
+        self.status.setText(f"{r.model}: {i['headline']} ({i.get('speed', '')})")
+
+        box = QMessageBox(self)
+        box.setWindowTitle(f"{r.model} on this PC")
+        box.setIcon(QMessageBox.Information if i["verdict"] in ("excellent", "good")
+                    else QMessageBox.Warning)
+        box.setText(i["headline"])
+        box.setInformativeText("\n".join(lines[1:]).strip())
+        box.setDetailedText(
+            f"machine: {r.specs.summary()}\n"
+            f"cpu: {r.specs.cpu}\n"
+            f"real-time factor: {r.rtf}\n"
+            f"model load: {r.load_seconds}s\n"
+            f"sample: {r.sample_seconds:.0f}s of speech-shaped audio")
+        box.exec()
+
+    def _bench_failed(self, message: str) -> None:
+        self._bench_cleanup()
+        QMessageBox.warning(self, "Test failed", message)
 
     # -- download ----------------------------------------------------------
     def _download(self) -> None:
