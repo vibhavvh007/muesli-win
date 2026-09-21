@@ -176,4 +176,9 @@ is attached to the run as an artifact.
 
 ## Licence
 
-MIT, matching upstream Muesli.
+MIT - see [LICENSE](LICENSE).
+
+This is an independent Windows implementation of Muesli's feature set, not a
+port: it shares no code with the macOS app and is not affiliated with or
+supported by its authors. See [NOTICE.md](NOTICE.md) for the full mapping and
+for third-party component licences.
