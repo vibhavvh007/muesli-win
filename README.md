@@ -5,7 +5,7 @@ Windows build of the feature set of [Muesli](https://github.com/pHequals7/muesli
 (macOS, MIT). Speech-to-text runs on this PC; nothing is uploaded unless you
 deliberately choose a hosted engine.
 
-Ships as `Muesli-Setup-1.1.0.exe` — a per-user installer, no admin rights needed.
+Ships as `Muesli-Setup-1.1.1.exe` — a per-user installer, no admin rights needed.
 
 ```
 Hold  Right Alt          talk, release, the text types itself
@@ -48,7 +48,7 @@ application can capture it.
 
 ## Install
 
-Download `Muesli-Setup-1.1.0.exe` from the
+Download `Muesli-Setup-1.1.1.exe` from the
 [Releases](../../releases) page and run it. Windows 10 1809 or later, 64-bit.
 
 On first launch open **Settings → Models**, pick a model and press **Download**.
@@ -172,7 +172,7 @@ git clone <this repo>; cd muesli-win
 powershell -ExecutionPolicy Bypass -File packaging\build.ps1
 ```
 
-Produces `dist\Muesli\Muesli.exe` and `dist\Muesli-Setup-1.1.0.exe`.
+Produces `dist\Muesli\Muesli.exe` and `dist\Muesli-Setup-1.1.1.exe`.
 See [docs/BUILD.md](docs/BUILD.md) for the detail, and
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it fits together.
 

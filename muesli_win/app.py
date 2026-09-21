@@ -173,7 +173,12 @@ class MuesliApp:
         self.bridge.meeting_done.emit(mid or "")
 
     def _on_meeting_segment(self, speaker: str, text: str) -> None:
-        self.indicator.set_state("meeting", hint=f"{speaker}: {text[:24]}")
+        # An empty segment is the "meeting finished" marker; showing the pill
+        # again at that point is exactly the flicker we are trying to remove.
+        if not speaker and not text:
+            return
+        if self.recorder is not None and self.recorder.running:
+            self.indicator.set_state("meeting", hint=f"{speaker}: {text[:24]}")
 
     def _on_meeting_done(self, mid: str) -> None:
         self.tray.set_meeting_active(False)
@@ -224,7 +229,6 @@ class MuesliApp:
                 meeting_hooks.run(self.cfg, meeting, segments)
             except Exception:
                 log.exception("meeting hook dispatch failed")
-            self.bridge.meeting_segment.emit("", "")
             self.bridge.state.emit("idle")
 
     # -- lifecycle ---------------------------------------------------------

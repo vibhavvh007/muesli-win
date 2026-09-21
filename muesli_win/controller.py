@@ -37,6 +37,13 @@ from .winput.statemachine import Action, HotkeyStateMachine
 
 log = logging.getLogger(__name__)
 
+# How long an error stays on the floating indicator before it clears itself.
+# The tray notification keeps the detail, so the pill does not need to linger.
+ERROR_DISMISS_SECONDS = 4.0
+# If transcription has not finished by now something is wrong; release the UI
+# rather than leaving "Transcribing" on screen indefinitely.
+TRANSCRIBE_WATCHDOG_SECONDS = 180.0
+
 
 @dataclass
 class Events:
@@ -90,6 +97,7 @@ class DictationController:
         self._last_voice_at = 0.0
         self._target_app: tuple[str, str] = ("", "")
         self._state = "idle"
+        self._state_timer: threading.Timer | None = None
         self._quill_mode = False
         self._quill_selection = ""
 
@@ -112,6 +120,7 @@ class DictationController:
         return ok
 
     def stop(self) -> None:
+        self._cancel_state_timer()
         self._stop_capture(discard=True)
         self.hook.stop()
 
@@ -156,9 +165,51 @@ class DictationController:
 
     # -- state -------------------------------------------------------------
     def _set_state(self, state: str) -> None:
+        """Change state and guarantee it is not terminal.
+
+        `error` used to stick: nothing returned it to idle, so the floating
+        indicator sat there until the next dictation. `thinking` could stick too
+        if anything after the transcribe call raised. Both now clear themselves.
+        """
+        self._cancel_state_timer()
         if state != self._state:
             self._state = state
             self.events.fire("on_state", state)
+
+        if state == "error":
+            self._arm_state_timer(ERROR_DISMISS_SECONDS, self._clear_error)
+        elif state == "thinking":
+            self._arm_state_timer(TRANSCRIBE_WATCHDOG_SECONDS, self._watchdog_fired)
+
+    def _arm_state_timer(self, seconds: float, fn) -> None:
+        t = threading.Timer(seconds, fn)
+        t.daemon = True
+        self._state_timer = t
+        t.start()
+
+    def _cancel_state_timer(self) -> None:
+        t = getattr(self, "_state_timer", None)
+        if t is not None:
+            t.cancel()
+        self._state_timer = None
+
+    def _clear_error(self) -> None:
+        # Only if nothing has started since; the tray notification carries the
+        # detail, so the indicator does not need to sit there accusing.
+        if self._state == "error" and not self.machine.recording:
+            self._set_state("idle")
+
+    def _watchdog_fired(self) -> None:
+        if self._state != "thinking":
+            return
+        log.error("transcription still running after %ss; releasing the UI",
+                  TRANSCRIBE_WATCHDOG_SECONDS)
+        self.events.fire(
+            "on_error",
+            f"Transcription is taking longer than {int(TRANSCRIBE_WATCHDOG_SECONDS)}s. "
+            "It may still finish - check the dashboard. If this keeps happening, "
+            "try a smaller model.")
+        self._set_state("idle")
 
     @property
     def state(self) -> str:
@@ -289,6 +340,21 @@ class DictationController:
 
     # -- transcription -----------------------------------------------------
     def _process(self, audio: np.ndarray, duration_ms: int) -> None:
+        # try/finally around the whole body: anything raising after the
+        # transcribe call used to skip the final _set_state("idle") and leave
+        # "Transcribing" on screen permanently.
+        try:
+            self._process_inner(audio, duration_ms)
+        except Exception as exc:
+            log.exception("dictation processing failed")
+            self.events.fire("on_error", f"Dictation failed: {exc}")
+            self.sounds.play("error")
+            self._set_state("error")
+        finally:
+            if self._state == "thinking":
+                self._set_state("idle")
+
+    def _process_inner(self, audio: np.ndarray, duration_ms: int) -> None:
         with self._busy:
             t0 = time.monotonic()
             try:
@@ -364,6 +430,17 @@ class DictationController:
             "Quill: nothing selected - say what you want written.")
 
     def _process_quill(self, audio: np.ndarray) -> None:
+        try:
+            self._process_quill_inner(audio)
+        except Exception as exc:
+            log.exception("quill failed")
+            self.events.fire("on_error", f"Quill failed: {exc}")
+            self._set_state("error")
+        finally:
+            if self._state == "thinking":
+                self._set_state("idle")
+
+    def _process_quill_inner(self, audio: np.ndarray) -> None:
         selection, self._quill_selection = self._quill_selection, ""
         try:
             result = self.transcriber.transcribe(

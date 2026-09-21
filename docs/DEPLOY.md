@@ -88,7 +88,7 @@ nothing.
 
 > **Muesli — dictation for Windows**
 >
-> 1. Download the installer, extract the `.zip`, run `Muesli-Setup-1.1.0.exe`.
+> 1. Download the installer, extract the `.zip`, run `Muesli-Setup-1.1.1.exe`.
 > 2. Windows will warn that the publisher is unknown. Click **More info → Run anyway**.
 > 3. On first launch, open **Settings → Models**, select `parakeet-tdt-0.6b-v3`
 >    and press **Download** (640 MB, fastest), or `large-v3-turbo` (1.6 GB) if you

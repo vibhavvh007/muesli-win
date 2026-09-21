@@ -77,16 +77,25 @@ class FloatingIndicator(QWidget):
     def set_state(self, state: str, hint: str = "") -> None:
         self._state = state
         self._hint = hint
-        if state == "idle":
+
+        if state == "idle" or not self.cfg.get("show_floating_indicator", True):
+            # Also hides when the setting is switched off while it is on screen,
+            # which previously left it stuck until the next idle transition.
             self._decay.stop()
             self._level = 0.0
             self.hide()
             return
-        if self.cfg.get("show_floating_indicator", True):
-            self.show()
-            self.raise_()
-        if not self._decay.isActive():
-            self._decay.start()
+
+        self.show()
+        self.raise_()
+        # The level meter only animates while there is audio to show. Running it
+        # during transcription just burns wakeups behind a static pill.
+        if state in ("listening", "meeting"):
+            if not self._decay.isActive():
+                self._decay.start()
+        else:
+            self._decay.stop()
+            self._level = 0.0
         self.update()
 
     def set_level(self, level: float) -> None:
